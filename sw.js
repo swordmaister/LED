@@ -1,35 +1,30 @@
 // sw.js (index.html と同じ階層に保存してください)
 
-const CACHE_NAME = 'pwa-cache-v2'; // ★バージョン番号を上げることが重要！
+const CACHE_NAME = 'pwa-cache-v3'; // ★ バージョンを v3 に更新！
 const urlsToCache = [
-    './',          // ★重要: アプリのルートパス (GitHub Pages の場合はリポジトリのルート)
-    'index.html',  // ★重要: HTML ファイル自体
-    'sw.js',
+    './',          // 現在のディレクトリのインデックス (index.htmlとして機能することが多い)
+    'index.html',  // HTML ファイル自体
+    'sw.js',       // Service Worker 自体
+    // NOTE: 外部のアセット（画像、フォントなど）がないため、これ以上は追加しません。
 ];
 
 // Service Worker のインストール
 self.addEventListener('install', (event) => {
-    console.log('[Service Worker] Install');
+    console.log('[Service Worker] Install (v3)');
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
                 console.log('[Service Worker] Caching app shell');
-                // ブラウザのキャッシュが原因で index.html が古いままになるのを避けるため、
-                // リクエストのモードを 'no-cache' に設定してネットワークから取得を試みる
-                const fetchPromises = urlsToCache.map(url => {
-                    return fetch(url, { cache: "no-cache" }).then(response => {
-                        if (!response || response.status !== 200 || response.type !== 'basic') {
-                            // ネットワークエラーなどで取得失敗した場合、ログに出力して処理を続行
-                            console.error(`[Service Worker] Failed to fetch ${url} for caching.`);
-                            return new Response('', { status: 404 });
-                        }
-                        return cache.put(url, response);
-                    });
-                });
-                return Promise.all(fetchPromises);
+                
+                // キャッシュに失敗しないよう、fetch のオプションを削除し、
+                // リストにあるアセットをシンプルにキャッシュに加えます。
+                return cache.addAll(urlsToCache);
             })
             .catch((error) => {
-                console.error('[Service Worker] Caching failed:', error);
+                // ここでエラーが出ると「オフライン化に失敗しました！」となります。
+                console.error('[Service Worker] Caching failed (AddAll Error):', error);
+                // 失敗した場合はPromise.rejectを返してインストールを失敗させます
+                throw error; 
             })
     );
     self.skipWaiting();
@@ -37,12 +32,13 @@ self.addEventListener('install', (event) => {
 
 // Service Worker のアクティベート (古いキャッシュの削除など)
 self.addEventListener('activate', (event) => {
-    console.log('[Service Worker] Activate');
+    console.log('[Service Worker] Activate (v3)');
     const cacheWhitelist = [CACHE_NAME];
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cacheName) => {
+                    if (!cacheName.startsWith('pwa-cache-v')) return; // 自分のキャッシュ名のみ対象
                     if (cacheWhitelist.indexOf(cacheName) === -1) {
                         console.log('[Service Worker] Deleting old cache:', cacheName);
                         return caches.delete(cacheName);
@@ -54,17 +50,14 @@ self.addEventListener('activate', (event) => {
     return self.clients.claim();
 });
 
-// リクエストの処理 (キャッシュから提供 or ネットワークから取得)
+// リクエストの処理
 self.addEventListener('fetch', (event) => {
-    // 自身のオリジンからのすべてのリクエストを処理
     event.respondWith(
         caches.match(event.request)
             .then((response) => {
-                // キャッシュに見つかったらそれを返す
                 if (response) {
                     return response;
                 }
-                // キャッシュになかったらネットワークから取得
                 return fetch(event.request);
             })
     );
