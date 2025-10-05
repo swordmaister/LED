@@ -369,7 +369,8 @@
     <div id="rotation-button" onclick="rotateScreen()"></div>
 
     <script>
-        // --- Service Worker 管理クラス (修正版) ---
+        // --- Service Worker 管理クラス (最終安定化版) ---
+        // SWの解除とキャッシュの削除を確実に実行するように強化
         class ServiceWorkerManager {
             constructor() {
                 this.installButton = document.getElementById('installButton');
@@ -384,14 +385,14 @@
                 }
             }
 
-            // 登録状況を確認し、ボタンの表示を切り替える (起動時とSW操作後に使用)
+            // 登録状況を確認し、ボタンの表示を切り替える
             async checkRegistration() {
                 try {
                     const registrations = await navigator.serviceWorker.getRegistrations();
                     // ルートスコープ ('/') で登録されているかを確認
                     const isRegistered = registrations.some(reg => reg.scope === location.origin + '/');
                     this.updateButtons(isRegistered);
-                    return isRegistered; // 状態を返す
+                    return isRegistered;
                 } catch (e) {
                     console.error('Service Worker Registration Check Failed:', e);
                     this.updateButtons(false);
@@ -399,7 +400,7 @@
                 }
             }
 
-            // ボタンの表示状態を更新するヘルパー関数
+            // ボタンの表示状態を更新
             updateButtons(isRegistered) {
                 if (isRegistered) {
                     this.installButton.style.display = 'none';
@@ -414,7 +415,6 @@
             async installSW() {
                 if (!('serviceWorker' in navigator)) return;
                 
-                // 既に登録済みでないか確認 (多重登録の防止)
                 if (await this.checkRegistration()) {
                     alert('すでにオフライン化されています。');
                     return;
@@ -425,7 +425,7 @@
                     const registration = await navigator.serviceWorker.register('sw.js');
                     alert('✨ アプリがオフライン化されました！次回以降、インターネットなしで起動できます。');
                     console.log('Service Worker registered:', registration);
-                    this.updateButtons(true); // 成功したら即座にボタン表示を切り替え
+                    this.updateButtons(true);
                 } catch (error) {
                     alert('オフライン化に失敗しました。Webサーバー上にファイルを正しく配置しているか確認してください。');
                     console.error('Service Worker registration failed:', error);
@@ -433,39 +433,49 @@
                 }
             }
 
-            // オンライン化解除（Service Workerのアンインストール）
+            // オンライン化解除（Service Workerのアンインストールとキャッシュのクリア）
             async uninstallSW() {
                 if (!('serviceWorker' in navigator)) return;
 
+                let unregistered = false;
                 try {
                     const registrations = await navigator.serviceWorker.getRegistrations();
-                    let unregistered = false;
-
+                    
+                    // 1. SWのアンインストール
                     for (const registration of registrations) {
-                        // ルートスコープの Service Worker のみを探す
                         if (registration.scope === location.origin + '/') { 
                             await registration.unregister();
                             unregistered = true;
-                            // アンインストール後のクリーンアップを待つため、少し遅延させる
+                            console.log('Service Worker unregistered:', registration);
+                            // アンインストール後のクリーンアップを待つために少し待機
                             await new Promise(resolve => setTimeout(resolve, 500)); 
                             break; 
                         }
                     }
                     
-                    if (unregistered) {
-                        alert('🗑️ オフライン化を解除しました。次回起動時にはオンライン接続が必要です。');
-                    } else {
-                        // 解除を試みたが登録が見つからなかった場合
-                        alert('Service Workerの登録が見つかりませんでした。'); 
+                    // 2. キャッシュストレージの全削除 (より確実なクリーンアップ)
+                    const cacheNames = await caches.keys();
+                    let cachesDeleted = false;
+                    for (const cacheName of cacheNames) {
+                        if (cacheName.startsWith('arcled-cache-')) { // sw.jsで指定したCACHE_NAMEのプレフィックスを使用
+                            await caches.delete(cacheName);
+                            cachesDeleted = true;
+                            console.log('Cache Deleted:', cacheName);
+                        }
                     }
 
-                    // 最終的なボタン表示の状態を更新
-                    this.updateButtons(false);
+                    if (unregistered || cachesDeleted) {
+                        alert('🗑️ オフライン化を解除し、関連キャッシュをクリアしました。次回起動時にはオンライン接続が必要です。');
+                    } else {
+                        // SWの登録もキャッシュも見つからなかった場合
+                        alert('Service Workerの登録や関連キャッシュが見つかりませんでした。'); 
+                    }
 
                 } catch (error) {
-                    alert('オフライン化の解除に失敗しました。ブラウザの開発者ツールから手動で解除してください。');
+                    alert('オフライン化の解除中にエラーが発生しました。ブラウザの開発者ツールで手動確認してください。');
                     console.error('Service Worker unregistration failed:', error);
-                    // 失敗時も念のため解除ボタンを非表示に
+                } finally {
+                    // 最終的にボタンの状態を更新 (登録がない状態にする)
                     this.updateButtons(false);
                 }
             }
@@ -549,43 +559,27 @@
                 });
             }
 
-            /**
-             * LED 太さ更新の要点：
-             * - slider 値（multiplierValue）を受け取り newWidth を算出
-             * - multiplierValue <= 2.0: 両端を丸める（カプセル：borderRadius = newWidth/2）
-             * - multiplierValue > 2.0: 角を小さくして長方形（borderRadius = 4px）
-             * - multiplier >= 2 の増分は 0.9 抑制（重なりを抑える）
-             * - ::before の幅（ぼかし）も倍率に応じて小さくする
-             */
             updateLedThickness(multiplier) {
                 const multiplierValue = parseFloat(multiplier);
-                // 基本の計算（抑制ロジック含む）
                 let effectiveMultiplier = multiplierValue;
                 if (multiplierValue >= 2.0) {
-                    effectiveMultiplier = 2.0 + (multiplierValue - 2.0) * 0.9; // 2倍超の増加を縮小
+                    effectiveMultiplier = 2.0 + (multiplierValue - 2.0) * 0.9;
                 }
                 const newWidth = this.baseLedWidth * effectiveMultiplier;
 
-                // CSS変数を更新（他のスタイルが参照する）
                 this.root.style.setProperty('--led-width', `${newWidth}px`);
                 this.root.style.setProperty('--led-multiplier', `${multiplierValue}`);
 
-                // border-radius を決定（JSで確実に制御）
                 if (multiplierValue <= 2.0) {
-                    // カプセル型：半径は幅の半分（端が丸い）
-                    const radius = Math.max(newWidth / 2, 4); // 最小4pxを保証
+                    const radius = Math.max(newWidth / 2, 4);
                     this.root.style.setProperty('--led-border-radius', `${radius}px`);
                 } else {
-                    // 2倍超は角ばった長方形（小さめの角丸）
                     this.root.style.setProperty('--led-border-radius', `4px`);
                 }
 
-                // ::before のぼかし幅を倍率に応じて調整（太いときは小さくして隣接干渉を軽減）
                 const beforeWidth = multiplierValue <= 2.0 ? 10 : 6;
                 this.root.style.setProperty('--led-before-width', `${beforeWidth}px`);
 
-                // 個々の LED 要素を再配置（幅に合わせて中心を保持）
-                // createLEDs が未実行の場合は this.leds は空配列なので安全
                 this.leds.forEach(led => {
                     const angle = parseFloat(led.dataset.angle);
                     const radius = parseFloat(led.dataset.radius);
@@ -594,8 +588,6 @@
                     const x = centerX + radius * Math.cos(radians) - (newWidth / 2);
                     led.style.left = x + 'px';
                     led.style.width = `${newWidth}px`;
-
-                    // inline style で borderRadius を上書き（確実に反映）
                     const br = getComputedStyle(this.root).getPropertyValue('--led-border-radius').trim();
                     if (br) led.style.borderRadius = br;
                 });
@@ -633,7 +625,6 @@
                     }
                     if (settings.animationMode) this.setAnimationMode(settings.animationMode);
                 } else {
-                    // デフォルトを適用
                     const opacityEl = document.getElementById('settingsButtonOpacity');
                     if (opacityEl) this.settingsButton.style.opacity = opacityEl.value;
                     const ledEl = document.getElementById('ledThicknessMultiplier');
@@ -684,11 +675,9 @@
                 const totalAngle = 270;
                 const angleStep = totalAngle / 18;
 
-                // 既存要素を削除
                 this.leds.forEach(led => led.remove());
                 this.leds = [];
 
-                // 現在の幅を参照（JSに計算ロジックがあるためここでも反映）
                 const multiplier = this.getControlValue('ledThicknessMultiplier', false);
                 let currentLedWidth = this.baseLedWidth * multiplier;
                 if (multiplier >= 2.0) {
@@ -696,11 +685,9 @@
                     currentLedWidth = this.baseLedWidth * effectiveMultiplier;
                 }
 
-                // borderRadius を確定（create時にも反映）
                 const borderRadius = multiplier <= 2.0 ? `${Math.max(currentLedWidth / 2, 4)}px` : '4px';
                 this.root.style.setProperty('--led-border-radius', borderRadius);
 
-                // ::beforeの幅も決める
                 const beforeWidth = multiplier <= 2.0 ? 10 : 6;
                 this.root.style.setProperty('--led-before-width', `${beforeWidth}px`);
                 this.root.style.setProperty('--led-width', `${currentLedWidth}px`);
@@ -713,7 +700,6 @@
                     const led = document.createElement('div');
                     led.className = `led ${color}`;
 
-                    // データ属性に角度と半径を保存（再レイアウト時に使用）
                     led.dataset.angle = angle;
                     led.dataset.radius = radius;
 
@@ -725,7 +711,7 @@
                     led.style.top = y + 'px';
                     led.style.width = `${currentLedWidth}px`;
                     led.style.transform = `rotate(${angle + 180}deg)`;
-                    led.style.borderRadius = borderRadius; // inline で確実に適用
+                    led.style.borderRadius = borderRadius;
 
                     this.device.appendChild(led);
                     this.leds.push(led);
