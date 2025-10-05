@@ -1,7 +1,7 @@
 {
   "name": "ArcLED Roulette",
   "short_name": "arcLed",
-  "start_url": "./",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#1e1e1e",
   "theme_color": "#00aa66",
