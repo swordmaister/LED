@@ -372,136 +372,148 @@
         // --- Service Worker 管理クラス (最終安定化版) ---
         // SWの解除とキャッシュの削除を確実に実行するように強化
         class ServiceWorkerManager {
-            constructor() {
-                this.installButton = document.getElementById('installButton');
-                this.uninstallButton = document.getElementById('uninstallButton');
-                
-                if ('serviceWorker' in navigator) {
-                    this.checkRegistration();
-                } else {
-                    this.installButton.textContent = 'オフライン化は利用できません';
-                    this.installButton.disabled = true;
-                    this.uninstallButton.style.display = 'none';
-                }
-            }
-
-            // 登録状況を確認し、ボタンの表示を切り替える
-            async checkRegistration() {
-                try {
-                    const registrations = await navigator.serviceWorker.getRegistrations();
-                    // ルートスコープ ('/') で登録されているかを確認
-                    const isRegistered = registrations.some(reg => reg.scope === location.origin + '/');
-                    this.updateButtons(isRegistered);
-                    return isRegistered;
-                } catch (e) {
-                    console.error('Service Worker Registration Check Failed:', e);
-                    this.updateButtons(false);
-                    return false;
-                }
-            }
-
-            // ボタンの表示状態を更新
-            updateButtons(isRegistered) {
-                if (isRegistered) {
-                    this.installButton.style.display = 'none';
-                    this.uninstallButton.style.display = 'block';
-                } else {
-                    this.installButton.style.display = 'block';
-                    this.uninstallButton.style.display = 'none';
-                }
-            }
-
-            // オフライン化（Service Workerのインストール）
-// ServiceWorkerManager クラスの uninstallSW メソッドを以下に置き換えてください
-async uninstallSW() {
-    if (!('serviceWorker' in navigator)) return;
-
-    let unregisteredCount = 0;
-    try {
-        const registrations = await navigator.serviceWorker.getRegistrations();
+    constructor(swPath, scope = '/') {
+        this.swPath = swPath;
+        this.scope = scope;
+        this.installButton = document.getElementById('install-pwa');
+        this.uninstallButton = document.getElementById('uninstall-pwa');
         
-        // 1. 登録されている全てのService Workerを解除する (スコープを問わない)
-        // これにより、ルートスコープ以外の登録ミスにも対応できます。
-        for (const registration of registrations) {
-            await registration.unregister();
-            unregisteredCount++;
-        }
-        
-        // 2. キャッシュストレージの全削除
-        const cacheNames = await caches.keys();
-        let cachesDeleted = false;
-        for (const cacheName of cacheNames) {
-            if (cacheName.startsWith('arcled-cache-')) { // sw.jsで指定したCACHE_NAMEのプレフィックスを使用
-                await caches.delete(cacheName);
-                cachesDeleted = true;
-            }
-        }
+        // 開発者ツールでキャッシュ名が特定しやすいよう、プレフィックスを定義
+        this.CACHE_PREFIX = 'app-cache-';
 
-        if (unregisteredCount > 0 || cachesDeleted) {
-            alert(`🗑️ オフライン化を解除し、関連キャッシュをクリアしました (${unregisteredCount}個のSWを解除)。ページをリロードして確認してください。`);
+        if ('serviceWorker' in navigator) {
+            this.setupEventListeners();
+            this.checkRegistration();
         } else {
-            // SWの登録もキャッシュも見つからなかった場合
-            alert('Service Workerの登録や関連キャッシュが見つかりませんでした。'); 
+            // Service Workerが非対応のブラウザ向け処理
+            console.warn('このブラウザはService Workerをサポートしていません。');
+            if (this.installButton) this.installButton.disabled = true;
+            if (this.uninstallButton) this.uninstallButton.disabled = true;
+        }
+    }
+
+    setupEventListeners() {
+        if (this.installButton) {
+            this.installButton.addEventListener('click', () => this.installSW());
+        }
+        if (this.uninstallButton) {
+            this.uninstallButton.addEventListener('click', () => this.uninstallSW());
         }
 
-    } catch (error) {
-        alert('オフライン化の解除中に致命的なエラーが発生しました。ブラウザの設定からWebサイトデータを削除してください。');
-        console.error('Service Worker unregistration failed:', error);
-    } finally {
-        // 最終的にボタンの状態を更新 (登録がない状態にする)
-        this.updateButtons(false);
+        // SWのライフサイクルイベントをリスニング
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            // SWが新しく制御を開始したとき（インストールや更新）に状態をチェック
+            this.checkRegistration();
+        });
+    }
+
+    /**
+     * 現在のSWの登録状態を確認し、ボタンの表示を更新する
+     */
+    async checkRegistration() {
+        if (!('serviceWorker' in navigator)) return;
+
+        try {
+            // スコープに基づいた現在の登録状況を取得
+            const registration = await navigator.serviceWorker.getRegistration(this.scope);
+            
+            // registrationが存在すれば、有効/無効フラグでボタンを更新
+            const isRegistered = !!registration;
+            this.updateButtons(isRegistered);
+
+        } catch (error) {
+            console.error('Service Worker登録状態の確認に失敗しました:', error);
+            // エラーが発生した場合も、一旦未登録として処理する
+            this.updateButtons(false); 
+        }
+    }
+
+    /**
+     * ボタンのdisabled状態を更新するヘルパー
+     */
+    updateButtons(isRegistered) {
+        if (this.installButton) {
+            this.installButton.disabled = isRegistered;
+        }
+        if (this.uninstallButton) {
+            this.uninstallButton.disabled = !isRegistered;
+        }
+        // UIに現在の状態をフィードバックする要素があれば、ここで更新できます
+        // 例: document.getElementById('status').textContent = isRegistered ? 'オフライン機能有効' : 'オフライン機能無効';
+    }
+
+    /**
+     * Service Workerを登録し、PWAを有効化する
+     */
+    async installSW() {
+        if (!('serviceWorker' in navigator)) return;
+
+        try {
+            const registration = await navigator.serviceWorker.register(this.swPath, { scope: this.scope });
+            
+            // 登録が完了したら、ボタンの状態を更新
+            this.updateButtons(true);
+            alert('✅ オフライン機能（PWA）の登録が完了しました！');
+            console.log('Service Worker 登録成功:', registration);
+
+        } catch (error) {
+            alert(`❌ オフライン機能の登録に失敗しました: ${error.message}`);
+            console.error('Service Worker 登録失敗:', error);
+            this.updateButtons(false);
+        }
+    }
+
+    /**
+     * Service Workerを解除し、キャッシュを全て削除してPWAを無効化する
+     */
+    async uninstallSW() {
+        if (!('serviceWorker' in navigator)) return;
+        
+        let isUnregistered = false;
+        try {
+            // 1. 登録済みSWを解除
+            const registration = await navigator.serviceWorker.getRegistration(this.scope);
+
+            if (registration) {
+                // unregister()は非同期で、解除完了を待つ
+                isUnregistered = await registration.unregister();
+            } else {
+                console.log('解除対象のService Workerは既に登録されていませんでした。');
+            }
+
+            // 2. 関連するキャッシュストレージを全削除 (登録解除とは別で実行する必要がある)
+            const cacheKeys = await caches.keys();
+            let cacheDeleted = false;
+            for (const key of cacheKeys) {
+                if (key.startsWith(this.CACHE_PREFIX)) { 
+                    await caches.delete(key);
+                    cacheDeleted = true;
+                }
+            }
+            
+            // 3. 処理結果に基づくメッセージ表示
+            if (isUnregistered || cacheDeleted) {
+                alert('🗑️ オフライン機能の解除とキャッシュのクリアが完了しました。ページをリロードして確認してください。');
+            } else {
+                alert('⚠️ 解除処理は実行されましたが、元々登録されていなかったか、キャッシュが見つかりませんでした。');
+            }
+
+        } catch (error) {
+            alert('❌ オフライン機能の解除中に致命的なエラーが発生しました。ブラウザの設定からWebサイトデータを削除してください。');
+            console.error('Service Worker 解除失敗:', error);
+        } finally {
+            // 処理結果に関わらず、ボタンの状態は未登録状態に更新
+            this.updateButtons(false);
+        }
     }
 }
 
+// ページロード時に初期化
+// 'sw.js'はService Workerのファイルパス、'/'はスコープ
+document.addEventListener('DOMContentLoaded', () => {
+    new ServiceWorkerManager('sw.js', '/');
+});
 
-            // オンライン化解除（Service Workerのアンインストールとキャッシュのクリア）
-            async uninstallSW() {
-                if (!('serviceWorker' in navigator)) return;
-
-                let unregistered = false;
-                try {
-                    const registrations = await navigator.serviceWorker.getRegistrations();
-                    
-                    // 1. SWのアンインストール
-                    for (const registration of registrations) {
-                        if (registration.scope === location.origin + '/') { 
-                            await registration.unregister();
-                            unregistered = true;
-                            console.log('Service Worker unregistered:', registration);
-                            // アンインストール後のクリーンアップを待つために少し待機
-                            await new Promise(resolve => setTimeout(resolve, 500)); 
-                            break; 
-                        }
-                    }
-                    
-                    // 2. キャッシュストレージの全削除 (より確実なクリーンアップ)
-                    const cacheNames = await caches.keys();
-                    let cachesDeleted = false;
-                    for (const cacheName of cacheNames) {
-                        if (cacheName.startsWith('arcled-cache-')) { // sw.jsで指定したCACHE_NAMEのプレフィックスを使用
-                            await caches.delete(cacheName);
-                            cachesDeleted = true;
-                            console.log('Cache Deleted:', cacheName);
-                        }
-                    }
-
-                    if (unregistered || cachesDeleted) {
-                        alert('🗑️ オフライン化を解除し、関連キャッシュをクリアしました。次回起動時にはオンライン接続が必要です。');
-                    } else {
-                        // SWの登録もキャッシュも見つからなかった場合
-                        alert('Service Workerの登録や関連キャッシュが見つかりませんでした。'); 
-                    }
-
-                } catch (error) {
-                    alert('オフライン化の解除中にエラーが発生しました。ブラウザの開発者ツールで手動確認してください。');
-                    console.error('Service Worker unregistration failed:', error);
-                } finally {
-                    // 最終的にボタンの状態を更新 (登録がない状態にする)
-                    this.updateButtons(false);
-                }
-            }
-        }
-        
         // --- LEDSequence クラス (変更なし) ---
         class LEDSequence {
             constructor() {
