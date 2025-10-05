@@ -4,12 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>arcLed</title>
-    <!-- ▼ PWA対応：マニフェストファイルへのリンクを追加 ▼ -->
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#00aa66"/>
-    <!-- ▲ PWA対応 ▲ -->
     <style>
-        /* ...（元のCSSは変更なし）... */
+        /* 楽しいルーレット6色でサイコロ代わりに、最高18まで。友達と使う時はルールを決めてから使うといいよ！ */
         :root {
             --led-base-width: 8px; /* 元の1倍ベース（JSで上書き） */
             --led-base-height: 25px;
@@ -123,20 +120,6 @@
 
         .reset-button { background:#444; color:#fff; border:none; padding:8px 16px; border-radius:20px; cursor:pointer; transition:background 0.3s ease; font-size:11px; margin-bottom:10px; }
         .reset-button:hover { background:#555; }
-        
-        /* ▼ オフラインボタン用のスタイルを追加 ▼ */
-        .offline-button {
-            background: #00aa66; color: #fff; border: none; padding: 8px 16px;
-            border-radius: 20px; cursor: pointer; transition: background 0.3s ease;
-            font-size: 11px; margin-top: 5px; text-align: center;
-        }
-        .offline-button:hover { background: #00c275; }
-        .offline-button#uninstall-button { background: #aa4444; }
-        .offline-button#uninstall-button:hover { background: #c25555; }
-        #offline-status {
-            font-size: 11px; color: #00aa66; margin: 5px 0 0; text-align: left;
-        }
-        /* ▲ オフラインボタン用のスタイルを追加 ▲ */
 
         .device-container {
             position: absolute;
@@ -274,6 +257,24 @@
             backdrop-filter: blur(5px);
         }
 
+        /* 新しいオフラインボタンのスタイル */
+        .offline-button {
+            background: #0088ff;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            font-size: 11px;
+            margin-bottom: 5px;
+            width: 100%;
+        }
+        .offline-button:hover { background: #0099ff; }
+        .offline-button.uninstall { background: #ff4444; }
+        .offline-button.uninstall:hover { background: #ff5555; }
+
+
         @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.2;} }
         .led.blinking { animation: blink 0.6s ease-in-out infinite; }
 
@@ -294,16 +295,16 @@
         <a href="#panel-bottom" class="controls-jump-button">最下部へ</a>
         <button class="reset-button" onclick="window.ledSequence.resetToDefault()">設定をリセット</button>
 
-        <!-- ▼ オフライン設定のUIを追加 ▼ -->
-        <div class="control-group" id="offline-settings">
-            <h4>オフライン設定</h4>
-            <p style="font-size: 10px; color: #888; margin: 0; text-align: left;">このアプリをオフラインでも使えるようにします。</p>
-            <button id="install-button" class="offline-button" style="display: none;">オフライン対応にする</button>
-            <button id="uninstall-button" class="offline-button" style="display: none;">オフライン対応を解除</button>
-            <p id="offline-status"></p>
+        <div class="control-group">
+            <h4>オフライン設定 (PWA)</h4>
+            <button class="offline-button" id="installButton" onclick="window.serviceWorkerManager.installSW()">
+                アプリをオフライン化（次回からオフラインで起動可能）
+            </button>
+            <button class="offline-button uninstall" id="uninstallButton" onclick="window.serviceWorkerManager.uninstallSW()" style="display:none;">
+                オフライン化を解除
+            </button>
         </div>
-        <!-- ▲ オフライン設定のUIを追加 ▲ -->
-
+        
         <div class="control-group">
             <h4>アイコン設定</h4>
             <label for="settingsButtonOpacity">歯車アイコンの濃さ</label>
@@ -369,7 +370,86 @@
     <div id="rotation-button" onclick="rotateScreen()"></div>
 
     <script>
-        // ...（元の `LEDSequence` クラスは変更なし）...
+        // --- Service Worker 管理クラスの追加 ---
+        class ServiceWorkerManager {
+            constructor() {
+                this.installButton = document.getElementById('installButton');
+                this.uninstallButton = document.getElementById('uninstallButton');
+                if ('serviceWorker' in navigator) {
+                    this.checkRegistration();
+                } else {
+                    this.installButton.textContent = 'オフライン化は利用できません';
+                    this.installButton.disabled = true;
+                    this.uninstallButton.style.display = 'none';
+                }
+            }
+
+            // 現在のService Worker登録状況を確認し、ボタンの表示を切り替える
+            checkRegistration() {
+                navigator.serviceWorker.getRegistrations().then(registrations => {
+                    const isRegistered = registrations.some(reg => reg.scope === location.origin + '/');
+                    this.updateButtons(isRegistered);
+                }).catch(() => {
+                    this.updateButtons(false);
+                });
+            }
+
+            // ボタンの表示状態を更新するヘルパー
+            updateButtons(isRegistered) {
+                if (isRegistered) {
+                    this.installButton.style.display = 'none';
+                    this.uninstallButton.style.display = 'block';
+                } else {
+                    this.installButton.style.display = 'block';
+                    this.uninstallButton.style.display = 'none';
+                }
+            }
+
+            // オフライン化（Service Workerのインストール）
+            async installSW() {
+                if ('serviceWorker' in navigator) {
+                    try {
+                        const registration = await navigator.serviceWorker.register('sw.js');
+                        alert('✨ アプリがオフライン化されました！次回以降、インターネットなしで起動できます。');
+                        console.log('Service Worker registered:', registration);
+                        this.updateButtons(true);
+                    } catch (error) {
+                        alert('オフライン化に失敗しました。この機能に対応していない可能性があります。');
+                        console.error('Service Worker registration failed:', error);
+                    }
+                }
+            }
+
+            // オフライン化解除（Service Workerのアンインストール）
+            async uninstallSW() {
+                if ('serviceWorker' in navigator) {
+                    try {
+                        const registrations = await navigator.serviceWorker.getRegistrations();
+                        let unregistered = false;
+                        for (const registration of registrations) {
+                            if (registration.scope === location.origin + '/') {
+                                await registration.unregister();
+                                unregistered = true;
+                                console.log('Service Worker unregistered:', registration);
+                                break; 
+                            }
+                        }
+                        if (unregistered) {
+                            alert('🗑️ オフライン化を解除しました。次回起動時にはオンライン接続が必要です。');
+                            this.updateButtons(false);
+                            // キャッシュもクリアしたい場合は、ブラウザのデベロッパーツールから手動で行う必要があります
+                        } else {
+                            alert('Service Workerは登録されていませんでした。');
+                        }
+                    } catch (error) {
+                        alert('オフライン化の解除に失敗しました。');
+                        console.error('Service Worker unregistration failed:', error);
+                    }
+                }
+            }
+        }
+        
+        // 元のLEDSequenceクラスのコード (変更なし)
         class LEDSequence {
             constructor() {
                 this.colors = ['red','orange','yellow','green','blue','purple'];
@@ -787,6 +867,7 @@
                 });
             }
         }
+        // 元のLEDSequenceクラスのコードここまで
 
         let deviceRotation = 277.5;
 
@@ -841,91 +922,7 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             window.ledSequence = new LEDSequence();
-
-            // ▼▼▼ PWAとオフライン対応のロジックを追加 ▼▼▼
-            let deferredPrompt;
-            const installButton = document.getElementById('install-button');
-            const uninstallButton = document.getElementById('uninstall-button');
-            const offlineStatus = document.getElementById('offline-status');
-
-            // Service Workerが利用可能かチェック
-            if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register('sw.js')
-                    .then(registration => {
-                        console.log('Service Worker registered:', registration);
-                        // 既にService Workerが有効ならアンインストールボタンを表示
-                        if (navigator.serviceWorker.controller) {
-                            showUninstallButton();
-                        }
-                    }).catch(error => {
-                        console.error('Service Worker registration failed:', error);
-                        offlineStatus.textContent = 'オフライン対応に失敗しました。';
-                    });
-            } else {
-                // Service Worker未対応のブラウザでは設定項目を非表示
-                document.getElementById('offline-settings').style.display = 'none';
-            }
-
-            // インストールプロンプトが表示される直前のイベントを捕捉
-            window.addEventListener('beforeinstallprompt', (e) => {
-                e.preventDefault(); // プロンプトをすぐには表示しない
-                deferredPrompt = e;
-                showInstallButton();
-            });
-
-            function showInstallButton() {
-                if (deferredPrompt) {
-                    installButton.style.display = 'block';
-                    uninstallButton.style.display = 'none';
-                    offlineStatus.textContent = '';
-                    
-                    installButton.onclick = () => {
-                        installButton.style.display = 'none';
-                        deferredPrompt.prompt(); // インストールプロンプトを表示
-                        deferredPrompt.userChoice.then((choiceResult) => {
-                            if (choiceResult.outcome === 'accepted') {
-                                console.log('User accepted the install prompt');
-                                offlineStatus.textContent = 'オフライン対応が完了しました。';
-                                setTimeout(showUninstallButton, 1000);
-                            } else {
-                                console.log('User dismissed the install prompt');
-                                showInstallButton(); // 拒否された場合は再度ボタンを表示
-                            }
-                            deferredPrompt = null;
-                        });
-                    };
-                }
-            }
-
-            function showUninstallButton() {
-                installButton.style.display = 'none';
-                uninstallButton.style.display = 'block';
-                offlineStatus.textContent = '現在オフライン対応です。';
-
-                uninstallButton.onclick = () => {
-                    if ('serviceWorker' in navigator) {
-                        navigator.serviceWorker.getRegistrations().then(registrations => {
-                            for (let registration of registrations) {
-                                registration.unregister(); // Service Workerの登録を解除
-                            }
-                        });
-                        caches.keys().then(keys => {
-                            return Promise.all(keys.map(key => caches.delete(key))); // 全てのキャッシュを削除
-                        }).then(() => {
-                            alert('オフライン対応を解除しました。ページをリロードしてください。');
-                            location.reload();
-                        });
-                    }
-                };
-            }
-            
-            // アプリがインストールされたときのイベント
-            window.addEventListener('appinstalled', () => {
-                installButton.style.display = 'none';
-                uninstallButton.style.display = 'none';
-                offlineStatus.textContent = 'アプリとしてインストールされました。';
-            });
-            // ▲▲▲ PWAとオフライン対応のロジックを追加 ▲▲▲
+            window.serviceWorkerManager = new ServiceWorkerManager(); // Service Worker Managerを初期化
         });
     </script>
 </body>
