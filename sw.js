@@ -1,56 +1,31 @@
-const CACHE_NAME = 'arcled-cache-v2';
-// キャッシュ対象のファイルリスト（HTML、マニフェスト、SW、アイコンなど）
-const urlsToCache = [
-  './', // ルートパス (サイトの開始URL)
-  'index.html', // 本体ファイル
-  'manifest.json', // マニフェストファイル
-  'sw.js', // Service Worker ファイル自身
-  // 必要に応じて、'icon-192.png' などのアイコン画像も追加してください
-];
+// 新しい sw.js の内容（強制解除用）
 
-self.addEventListener('install', (event) => {
-  console.log('SW: Install event triggered.');
-  // キャッシュを開き、urlsToCache のファイルを全て追加
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('SW: Caching App Shell');
-        return cache.addAll(urlsToCache).catch(error => {
-            console.error('SW: Cache addAll failed:', error);
-        });
-      })
-  );
+self.addEventListener('install', event => {
+    // 新しいSWがインストールされたらすぐに有効化する（古いSWを追い出す）
+    self.skipWaiting(); 
 });
 
-self.addEventListener('fetch', (event) => {
-  // ネットワークリクエストが発生したら、キャッシュを優先して応答
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // キャッシュがあればそれを使用
-        if (response) {
-          return response;
-        }
-        // キャッシュがなければネットワークから取得
-        return fetch(event.request);
-      })
-  );
-});
-
-self.addEventListener('activate', (event) => {
-  console.log('SW: Activate event triggered.');
-  const cacheWhitelist = [CACHE_NAME];
-  // 古いキャッシュを削除
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
-            console.log('SW: Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
+self.addEventListener('activate', event => {
+    console.log('強制解除用SWがアクティベートされました。古いSWを解除します。');
+    
+    // 1. 自分自身の登録を解除
+    self.registration.unregister()
+        .then(() => {
+            console.log('Service Worker: 強制解除成功。');
         })
-      );
-    })
-  );
+        .catch(error => {
+            console.error('Service Worker: 強制解除失敗', error);
+        });
+
+    // 2. 既存の全キャッシュをクリア
+    event.waitUntil(
+        caches.keys().then(keyList => {
+            return Promise.all(keyList.map(key => {
+                if (key.startsWith('arcled-cache-')) { 
+                    console.log('Cache: 削除中', key);
+                    return caches.delete(key);
+                }
+            }));
+        })
+    );
 });
