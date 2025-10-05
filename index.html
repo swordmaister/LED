@@ -412,26 +412,47 @@
             }
 
             // オフライン化（Service Workerのインストール）
-            async installSW() {
-                if (!('serviceWorker' in navigator)) return;
-                
-                if (await this.checkRegistration()) {
-                    alert('すでにオフライン化されています。');
-                    return;
-                }
-                
-                try {
-                    // sw.js を登録
-                    const registration = await navigator.serviceWorker.register('sw.js');
-                    alert('✨ アプリがオフライン化されました！次回以降、インターネットなしで起動できます。');
-                    console.log('Service Worker registered:', registration);
-                    this.updateButtons(true);
-                } catch (error) {
-                    alert('オフライン化に失敗しました。Webサーバー上にファイルを正しく配置しているか確認してください。');
-                    console.error('Service Worker registration failed:', error);
-                    this.updateButtons(false);
-                }
+// ServiceWorkerManager クラスの uninstallSW メソッドを以下に置き換えてください
+async uninstallSW() {
+    if (!('serviceWorker' in navigator)) return;
+
+    let unregisteredCount = 0;
+    try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        
+        // 1. 登録されている全てのService Workerを解除する (スコープを問わない)
+        // これにより、ルートスコープ以外の登録ミスにも対応できます。
+        for (const registration of registrations) {
+            await registration.unregister();
+            unregisteredCount++;
+        }
+        
+        // 2. キャッシュストレージの全削除
+        const cacheNames = await caches.keys();
+        let cachesDeleted = false;
+        for (const cacheName of cacheNames) {
+            if (cacheName.startsWith('arcled-cache-')) { // sw.jsで指定したCACHE_NAMEのプレフィックスを使用
+                await caches.delete(cacheName);
+                cachesDeleted = true;
             }
+        }
+
+        if (unregisteredCount > 0 || cachesDeleted) {
+            alert(`🗑️ オフライン化を解除し、関連キャッシュをクリアしました (${unregisteredCount}個のSWを解除)。ページをリロードして確認してください。`);
+        } else {
+            // SWの登録もキャッシュも見つからなかった場合
+            alert('Service Workerの登録や関連キャッシュが見つかりませんでした。'); 
+        }
+
+    } catch (error) {
+        alert('オフライン化の解除中に致命的なエラーが発生しました。ブラウザの設定からWebサイトデータを削除してください。');
+        console.error('Service Worker unregistration failed:', error);
+    } finally {
+        // 最終的にボタンの状態を更新 (登録がない状態にする)
+        this.updateButtons(false);
+    }
+}
+
 
             // オンライン化解除（Service Workerのアンインストールとキャッシュのクリア）
             async uninstallSW() {
