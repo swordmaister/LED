@@ -274,7 +274,6 @@
         .offline-button.uninstall { background: #ff4444; }
         .offline-button.uninstall:hover { background: #ff5555; }
 
-
         @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0.2;} }
         .led.blinking { animation: blink 0.6s ease-in-out infinite; }
 
@@ -298,10 +297,10 @@
         <div class="control-group">
             <h4>オフライン設定 (PWA)</h4>
             <button class="offline-button" id="installButton" onclick="window.serviceWorkerManager.installSW()">
-                アプリをオフライン化（次回からオフラインで起動可能）
+                アプリをオフライン化 (PWAインストール)
             </button>
             <button class="offline-button uninstall" id="uninstallButton" onclick="window.serviceWorkerManager.uninstallSW()" style="display:none;">
-                オフライン化を解除
+                オフライン化を解除 (オンライン化)
             </button>
         </div>
         
@@ -370,107 +369,109 @@
     <div id="rotation-button" onclick="rotateScreen()"></div>
 
     <script>
-        // --- Service Worker 管理クラスの追加 ---
-class ServiceWorkerManager {
-    constructor() {
-        this.installButton = document.getElementById('installButton');
-        this.uninstallButton = document.getElementById('uninstallButton');
-        
-        if ('serviceWorker' in navigator) {
-            // ページ起動時に Service Worker の状態をチェックし、ボタン表示を制御
-            this.checkRegistration();
-        } else {
-            // Service Worker 非対応の場合、ボタンを無効化
-            this.installButton.textContent = 'オフライン化は利用できません';
-            this.installButton.disabled = true;
-            this.uninstallButton.style.display = 'none';
-        }
-    }
-
-    // 現在のService Worker登録状況を確認し、ボタンの表示を切り替える
-    async checkRegistration() {
-        try {
-            // Service Worker の登録を全て取得
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            // 現在のスコープ（ページのルート）に登録されているかを確認
-            const isRegistered = registrations.some(reg => reg.scope === location.origin + '/');
-            
-            this.updateButtons(isRegistered);
-        } catch (e) {
-            console.error('Service Worker Registration Check Failed:', e);
-            this.updateButtons(false); // エラー時は未登録として処理
-        }
-    }
-
-    // ボタンの表示状態を更新するヘルパー関数
-    updateButtons(isRegistered) {
-        if (isRegistered) {
-            this.installButton.style.display = 'none';
-            this.uninstallButton.style.display = 'block';
-        } else {
-            this.installButton.style.display = 'block';
-            this.uninstallButton.style.display = 'none';
-        }
-    }
-
-    // オフライン化（Service Workerのインストール）
-    async installSW() {
-        if (!('serviceWorker' in navigator)) return;
-        
-        try {
-            const registration = await navigator.serviceWorker.register('sw.js');
-            alert('✨ アプリがオフライン化されました！次回以降、インターネットなしで起動できます。');
-            console.log('Service Worker registered:', registration);
-            // 成功したら、即座にボタン表示を切り替え（多重再生防止）
-            this.updateButtons(true); 
-        } catch (error) {
-            alert('オフライン化に失敗しました。この機能に対応していない可能性があります。');
-            console.error('Service Worker registration failed:', error);
-            this.updateButtons(false);
-        }
-    }
-
-    // オフライン化解除（Service Workerのアンインストール）
-    async uninstallSW() {
-        if (!('serviceWorker' in navigator)) return;
-
-        try {
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            let unregistered = false;
-
-            // ルートスコープの Service Worker のみを探して解除
-            for (const registration of registrations) {
-                // スコープが現在のページと一致するか確認 (通常は '/' スコープ)
-                if (registration.scope === location.origin + '/') { 
-                    await registration.unregister();
-                    unregistered = true;
-                    console.log('Service Worker unregistered:', registration);
-                    break; // 見つかったらループを抜ける
+        // --- Service Worker 管理クラス (修正版) ---
+        class ServiceWorkerManager {
+            constructor() {
+                this.installButton = document.getElementById('installButton');
+                this.uninstallButton = document.getElementById('uninstallButton');
+                
+                if ('serviceWorker' in navigator) {
+                    this.checkRegistration();
+                } else {
+                    this.installButton.textContent = 'オフライン化は利用できません';
+                    this.installButton.disabled = true;
+                    this.uninstallButton.style.display = 'none';
                 }
             }
-            
-            // アンインストールが成功したか、元々登録されていなかったかで分岐
-            if (unregistered) {
-                alert('🗑️ オフライン化を解除しました。次回起動時にはオンライン接続が必要です。');
-            } else {
-                // 解除を試みたが登録が見つからなかった場合
-                alert('Service Workerの登録が見つかりませんでした。'); 
+
+            // 登録状況を確認し、ボタンの表示を切り替える (起動時とSW操作後に使用)
+            async checkRegistration() {
+                try {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    // ルートスコープ ('/') で登録されているかを確認
+                    const isRegistered = registrations.some(reg => reg.scope === location.origin + '/');
+                    this.updateButtons(isRegistered);
+                    return isRegistered; // 状態を返す
+                } catch (e) {
+                    console.error('Service Worker Registration Check Failed:', e);
+                    this.updateButtons(false);
+                    return false;
+                }
             }
 
-            // 最終的なボタン表示の状態を更新
-            this.updateButtons(false);
+            // ボタンの表示状態を更新するヘルパー関数
+            updateButtons(isRegistered) {
+                if (isRegistered) {
+                    this.installButton.style.display = 'none';
+                    this.uninstallButton.style.display = 'block';
+                } else {
+                    this.installButton.style.display = 'block';
+                    this.uninstallButton.style.display = 'none';
+                }
+            }
 
-        } catch (error) {
-            alert('オフライン化の解除に失敗しました。ブラウザの開発者ツールから手動で解除してください。');
-            console.error('Service Worker unregistration failed:', error);
-            // 解除失敗時も念のためボタン表示を更新
-            this.updateButtons(false);
+            // オフライン化（Service Workerのインストール）
+            async installSW() {
+                if (!('serviceWorker' in navigator)) return;
+                
+                // 既に登録済みでないか確認 (多重登録の防止)
+                if (await this.checkRegistration()) {
+                    alert('すでにオフライン化されています。');
+                    return;
+                }
+                
+                try {
+                    // sw.js を登録
+                    const registration = await navigator.serviceWorker.register('sw.js');
+                    alert('✨ アプリがオフライン化されました！次回以降、インターネットなしで起動できます。');
+                    console.log('Service Worker registered:', registration);
+                    this.updateButtons(true); // 成功したら即座にボタン表示を切り替え
+                } catch (error) {
+                    alert('オフライン化に失敗しました。Webサーバー上にファイルを正しく配置しているか確認してください。');
+                    console.error('Service Worker registration failed:', error);
+                    this.updateButtons(false);
+                }
+            }
+
+            // オンライン化解除（Service Workerのアンインストール）
+            async uninstallSW() {
+                if (!('serviceWorker' in navigator)) return;
+
+                try {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    let unregistered = false;
+
+                    for (const registration of registrations) {
+                        // ルートスコープの Service Worker のみを探す
+                        if (registration.scope === location.origin + '/') { 
+                            await registration.unregister();
+                            unregistered = true;
+                            // アンインストール後のクリーンアップを待つため、少し遅延させる
+                            await new Promise(resolve => setTimeout(resolve, 500)); 
+                            break; 
+                        }
+                    }
+                    
+                    if (unregistered) {
+                        alert('🗑️ オフライン化を解除しました。次回起動時にはオンライン接続が必要です。');
+                    } else {
+                        // 解除を試みたが登録が見つからなかった場合
+                        alert('Service Workerの登録が見つかりませんでした。'); 
+                    }
+
+                    // 最終的なボタン表示の状態を更新
+                    this.updateButtons(false);
+
+                } catch (error) {
+                    alert('オフライン化の解除に失敗しました。ブラウザの開発者ツールから手動で解除してください。');
+                    console.error('Service Worker unregistration failed:', error);
+                    // 失敗時も念のため解除ボタンを非表示に
+                    this.updateButtons(false);
+                }
+            }
         }
-    }
-}
-
         
-        // 元のLEDSequenceクラスのコード (変更なし)
+        // --- LEDSequence クラス (変更なし) ---
         class LEDSequence {
             constructor() {
                 this.colors = ['red','orange','yellow','green','blue','purple'];
@@ -888,7 +889,6 @@ class ServiceWorkerManager {
                 });
             }
         }
-        // 元のLEDSequenceクラスのコードここまで
 
         let deviceRotation = 277.5;
 
@@ -943,7 +943,7 @@ class ServiceWorkerManager {
 
         window.addEventListener('DOMContentLoaded', () => {
             window.ledSequence = new LEDSequence();
-            window.serviceWorkerManager = new ServiceWorkerManager(); // Service Worker Managerを初期化
+            window.serviceWorkerManager = new ServiceWorkerManager();
         });
     </script>
 </body>
